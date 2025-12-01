@@ -1,21 +1,46 @@
-const cluster = require("cluster");
-const os = require("os");
+const express = require("express");
+const { Worker } = require("worker_threads");
+const redis = require("redis");
 
-if (cluster.isMaster) {
-    console.log(`Master process PID: ${process.pid}`);
+const app = express();
 
-    const numCPUs = os.cpus().length;
+// Redis client
+const client = redis.createClient({ url: "redis://localhost:6379" }); // existing Redis
+client.connect();
+client.on("error", (err) => console.log("Redis Client Error", err));
 
-    // Fork workers
-    for (let i = 0; i < numCPUs; i++) {
-        cluster.fork();
+// /heavy endpoint with Redis caching
+app.get("/heavy", async (req, res) => {
+    const cacheKey = "heavyResult";
+
+    try {
+        // 1️⃣ Check if result is in Redis
+        const cached = await client.get(cacheKey);
+        if (cached) {
+            return res.json({ result: Number(cached), source: "cache" });
+        }
+
+        // 2️⃣ If not in cache, run heavy task in Worker Thread
+        const worker = new Worker("./childTask.js");
+        worker.on("message", async (result) => {
+            // Save result in Redis for 1 hour
+            await client.set(cacheKey, result, { EX: 3600 });
+            res.json({ result, source: "calculation" });
+        });
+
+        worker.on("error", (err) => {
+            res.status(500).json({ error: err.message });
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
+});
 
-    cluster.on("exit", (worker) => {
-        console.log(`Worker ${worker.process.pid} died. Starting a new one...`);
-        cluster.fork();
-    });
+// Light endpoint
+app.get("/", (req, res) => {
+    res.send(`Hello from server ${process.pid}`);
+});
 
-} else {
-    require("./workerTask");
-}
+// Start server
+app.listen(3000, () => console.log("Server running on port 3000"));
