@@ -14,16 +14,17 @@ app.get("/heavy", async (req, res) => {
     const cacheKey = "heavyResult";
 
     try {
-        // 1️⃣ Check if result is in Redis
+        
         const cached = await client.get(cacheKey);
         if (cached) {
             return res.json({ result: Number(cached), source: "cache" });
         }
 
-        // 2️⃣ If not in cache, run heavy task in Worker Thread
+        
         const worker = new Worker("./childTask.js");
         worker.on("message", async (result) => {
-            // Save result in Redis for 1 hour
+            
+            
             await client.set(cacheKey, result, { EX: 3600 });
             res.json({ result, source: "calculation" });
         });
